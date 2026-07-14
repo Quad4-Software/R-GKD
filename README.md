@@ -7,14 +7,14 @@ Reticulum Non-Interactive Multi-Party Key Exchange
 Initial Draft v1 - 14 July 2026 - Ivan 
 LXMF: f489752fbef161c64d65e385a4e9fc74 
 
-No LLMs was used in the creation of this document or crpytographic protocol. It is considered experimental until verified and extensively tested.
+No LLMs were used in the creation of this document or cryptographic protocol. It is considered experimental until verified and extensively tested.
 
 ---
 
 R-NIMKE is a way to allow for low-bandwidth and Reticulum Zen compatible encrypted group messaging over Reticulum Network Stack keeping large and small groups in mind. 
 
 ===
-CRPTOGRAPHIC PRIMATIVES
+CRYPTOGRAPHIC PRIMITIVES
 ===
 
   Identity / signatures:

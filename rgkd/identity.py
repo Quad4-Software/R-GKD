@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from cryptography.hazmat.primitives.asymmetric import ed25519, x25519
+from RNS.Cryptography import Ed25519PrivateKey, X25519PrivateKey
+from RNS.Identity import Identity
 
 from . import constants
 from .util import require_len
@@ -12,16 +13,16 @@ from .util import require_len
 class PeerKeys:
     """RNS-shaped peer: X25519 encryption half plus Ed25519 signing half."""
 
-    x25519_private: x25519.X25519PrivateKey
-    ed25519_private: ed25519.Ed25519PrivateKey
+    x25519_private: X25519PrivateKey
+    ed25519_private: Ed25519PrivateKey
 
     @property
     def member_pub(self) -> bytes:
-        return self.x25519_private.public_key().public_bytes_raw()
+        return self.x25519_private.public_key().public_bytes()
 
     @property
     def admin_pub(self) -> bytes:
-        return self.ed25519_private.public_key().public_bytes_raw()
+        return self.ed25519_private.public_key().public_bytes()
 
     @property
     def rns_public_key(self) -> bytes:
@@ -33,8 +34,8 @@ class PeerKeys:
 
 def generate_peer_keys() -> PeerKeys:
     return PeerKeys(
-        x25519_private=x25519.X25519PrivateKey.generate(),
-        ed25519_private=ed25519.Ed25519PrivateKey.generate(),
+        x25519_private=X25519PrivateKey.generate(),
+        ed25519_private=Ed25519PrivateKey.generate(),
     )
 
 
@@ -45,11 +46,9 @@ def split_rns_public_key(public_key: bytes) -> tuple[bytes, bytes]:
 
 
 def destination_hash_from_public(public_key: bytes) -> bytes:
-    """Truncated SHA-256 of the full RNS public key, matching Identity hash length."""
-    from hashlib import sha256
-
+    """Truncated hash of the full RNS public key, matching Identity.hash length."""
     require_len(public_key, constants.RNS_PUBLIC_KEY_SIZE, "rns public key")
-    return sha256(public_key).digest()[: constants.HASH16]
+    return Identity.truncated_hash(public_key)
 
 
 class MemberBindStatus:

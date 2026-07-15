@@ -29,23 +29,27 @@ def keydist_size(recipient_count: int) -> int:
     )
 
 
-def ordinary_header_size(fmt: int = constants.MSG_FORMAT_COUNTER) -> int:
-    if fmt == constants.MSG_FORMAT_COUNTER:
-        return constants.MSG_HEADER_COUNTER
-    if fmt == constants.MSG_FORMAT_XCHACHA:
-        return constants.MSG_HEADER_XCHACHA
-    raise ValueError(f"unknown message format {fmt}")
+def ordinary_header_size(fmt: int = constants.MSG_FORMAT_TOKEN) -> int:
+    if fmt != constants.MSG_FORMAT_TOKEN:
+        raise ValueError(f"unknown message format {fmt}")
+    return constants.MSG_HEADER
+
+
+def token_size_for_plaintext(plaintext_len: int) -> int:
+    if plaintext_len < 0:
+        raise ValueError("plaintext_len must be >= 0")
+    padded = ((plaintext_len // constants.AES_BLOCK) + 1) * constants.AES_BLOCK
+    return constants.TOKEN_IV_SIZE + padded + constants.TOKEN_HMAC_SIZE
 
 
 def message_overhead(
     plaintext_len: int,
     *,
-    fmt: int = constants.MSG_FORMAT_COUNTER,
     with_signature: bool = False,
 ) -> int:
-    header = ordinary_header_size(fmt)
+    header = ordinary_header_size()
     sig = constants.ED25519_SIG_SIZE if with_signature else 0
-    return header + constants.AEAD_TAG_SIZE + plaintext_len + sig
+    return header + token_size_for_plaintext(plaintext_len) + sig
 
 
 def draft_claims() -> dict[str, int | float]:
@@ -57,8 +61,7 @@ def draft_claims() -> dict[str, int | float]:
         "seal_blob": constants.SEAL_BLOB_SIZE,
         "keydist_fixed": constants.KEYDIST_FIXED,
         "keydist_per_recipient": constants.HASH16 + constants.SEAL_BLOB_SIZE,
-        "keydist_n15": keydist_size(15),
-        "msg_header_counter": constants.MSG_HEADER_COUNTER,
-        "msg_header_xchacha": constants.MSG_HEADER_XCHACHA,
-        "aead_tag": constants.AEAD_TAG_SIZE,
+        "keydist_n16": keydist_size(16),
+        "msg_header": constants.MSG_HEADER,
+        "token_overhead": constants.TOKEN_OVERHEAD,
     }

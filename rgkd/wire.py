@@ -233,12 +233,13 @@ def pack_ordinary_header(
     state_seq: int,
     epoch: int,
     counter: int,
-    fmt: int = constants.MSG_FORMAT_COUNTER,
+    fmt: int = constants.MSG_FORMAT_TOKEN,
     has_signature: bool = False,
-    nonce24: bytes = b"",
 ) -> bytes:
     require_len(group_id, constants.HASH16, "group_id")
     require_len(member_id, constants.HASH16, "member_id")
+    if fmt != constants.MSG_FORMAT_TOKEN:
+        raise ValueError(f"unknown format {fmt}")
     flags = constants.MSG_FLAG_HAS_SIG if has_signature else 0
     if flags & ~constants.MSG_KNOWN_FLAGS:
         raise ValueError("unknown message flag bits")
@@ -250,56 +251,31 @@ def pack_ordinary_header(
     header += be32(epoch)
     header += member_id[:8]
     header += be32(counter)
-    if fmt == constants.MSG_FORMAT_XCHACHA:
-        require_len(nonce24, 24, "nonce24")
-        header += nonce24
-    elif fmt != constants.MSG_FORMAT_COUNTER:
-        raise ValueError(f"unknown format {fmt}")
     return bytes(header)
 
 
-def ordinary_message_min_length(fmt: int, *, has_signature: bool) -> int:
-    if fmt == constants.MSG_FORMAT_COUNTER:
-        return (
-            constants.MSG_MIN_FORMAT1_SIGNED
-            if has_signature
-            else constants.MSG_MIN_FORMAT1
-        )
-    if fmt == constants.MSG_FORMAT_XCHACHA:
-        return (
-            constants.MSG_MIN_FORMAT2_SIGNED
-            if has_signature
-            else constants.MSG_MIN_FORMAT2
-        )
-    raise ValueError(f"unknown format {fmt}")
+def ordinary_message_min_length(*, has_signature: bool) -> int:
+    return constants.MSG_MIN_SIGNED if has_signature else constants.MSG_MIN_UNSIGNED
 
 
 def validate_ordinary_message_length(message: bytes) -> None:
-    """Reject truncated ordinary messages before splitting ciphertext and signature."""
+    """Reject truncated ordinary messages before splitting token and signature."""
     if len(message) < 4:
         raise ValueError("ordinary message too short")
     fmt = message[2]
     flags = message[3]
+    if fmt != constants.MSG_FORMAT_TOKEN:
+        raise ValueError(f"unknown format {fmt}")
     if flags & ~constants.MSG_KNOWN_FLAGS:
         raise ValueError("unknown message flag bits")
     has_sig = bool(flags & constants.MSG_FLAG_HAS_SIG)
-    minimum = ordinary_message_min_length(fmt, has_signature=has_sig)
+    minimum = ordinary_message_min_length(has_signature=has_sig)
     if len(message) < minimum:
         raise ValueError(
-            f"ordinary message too short for format {fmt}: "
-            f"need {minimum}, got {len(message)}"
+            f"ordinary message too short: need {minimum}, got {len(message)}"
         )
-    header_len = (
-        constants.MSG_HEADER_COUNTER
-        if fmt == constants.MSG_FORMAT_COUNTER
-        else constants.MSG_HEADER_XCHACHA
-        if fmt == constants.MSG_FORMAT_XCHACHA
-        else None
-    )
-    if header_len is None:
-        raise ValueError(f"unknown format {fmt}")
-    body_after_header = len(message) - header_len
+    body_after_header = len(message) - constants.MSG_HEADER
     if has_sig:
         body_after_header -= constants.ED25519_SIG_SIZE
-    if body_after_header < constants.AEAD_TAG_SIZE:
-        raise ValueError("ciphertext shorter than AEAD tag")
+    if body_after_header < constants.MSG_MIN_TOKEN:
+        raise ValueError("token shorter than RNS Token minimum")

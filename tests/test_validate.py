@@ -6,10 +6,10 @@ import unittest
 from rgkd import constants
 from rgkd.crypto import (
     commit_grs,
-    decrypt_chacha,
+    decrypt_token,
     derive_epoch_key,
-    encrypt_chacha,
-    message_keys_for,
+    encrypt_token,
+    message_key_for,
     seal_grs,
     unseal_grs,
 )
@@ -27,6 +27,7 @@ from rgkd.sizes import (
     message_overhead,
     ordinary_header_size,
     state_object_size,
+    token_size_for_plaintext,
 )
 from rgkd.wire import (
     MemberEntry,
@@ -48,12 +49,11 @@ class SizeClaimTests(unittest.TestCase):
         claims = draft_claims()
         self.assertEqual(claims["state_fixed_with_sig"], 204)
         self.assertEqual(claims["member_entry"], 68)
-        self.assertEqual(claims["seal_blob"], 100)
+        self.assertEqual(claims["seal_blob"], 144)
         self.assertEqual(claims["keydist_fixed"], 122)
-        self.assertEqual(claims["keydist_per_recipient"], 116)
-        self.assertEqual(claims["msg_header_counter"], 32)
-        self.assertEqual(claims["msg_header_xchacha"], 56)
-        self.assertEqual(claims["aead_tag"], 16)
+        self.assertEqual(claims["keydist_per_recipient"], 160)
+        self.assertEqual(claims["msg_header"], 32)
+        self.assertEqual(claims["token_overhead"], 48)
 
     def test_max_members_enforced(self) -> None:
         with self.assertRaises(ValueError):
@@ -81,9 +81,9 @@ class SizeClaimTests(unittest.TestCase):
 
     def test_draft_approximate_sizes(self) -> None:
         self.assertEqual(state_object_size(16), 204 + 68 * 16)
-        self.assertEqual(keydist_size(16), 122 + 16 * 116)
+        self.assertEqual(keydist_size(16), 122 + 16 * 160)
         rekey = state_object_size(16) + keydist_size(16)
-        self.assertAlmostEqual(rekey / 1024, 3.19, places=2)
+        self.assertAlmostEqual(rekey / 1024, 3.88, places=2)
 
     def test_packed_state_matches_formula(self) -> None:
         admin = generate_peer_keys()
@@ -124,7 +124,7 @@ class SizeClaimTests(unittest.TestCase):
             counter=0,
         )
         self.assertEqual(len(header), ordinary_header_size())
-        self.assertEqual(message_overhead(20), 32 + 16 + 20)
+        self.assertEqual(message_overhead(20), 32 + token_size_for_plaintext(20))
 
 
 class IdentityTests(unittest.TestCase):
@@ -150,18 +150,16 @@ class IdentityTests(unittest.TestCase):
 
 
 class CryptoTests(unittest.TestCase):
-    def test_aead_roundtrip_and_tamper(self) -> None:
-        key = os.urandom(32)
-        nonce = os.urandom(12)
+    def test_token_roundtrip_and_tamper(self) -> None:
+        key = os.urandom(64)
         pt = b"hello reticulum"
-        aad = b"aad"
-        ct = encrypt_chacha(key, nonce, pt, aad)
-        self.assertEqual(len(ct), len(pt) + 16)
-        self.assertEqual(decrypt_chacha(key, nonce, ct, aad), pt)
+        ct = encrypt_token(key, pt)
+        self.assertEqual(len(ct), token_size_for_plaintext(len(pt)))
+        self.assertEqual(decrypt_token(key, ct), pt)
         bad = bytearray(ct)
         bad[-1] ^= 0x01
         with self.assertRaises(Exception):
-            decrypt_chacha(key, nonce, bytes(bad), aad)
+            decrypt_token(key, bytes(bad))
 
     def test_seal_roundtrip(self) -> None:
         member = generate_peer_keys()
@@ -175,7 +173,7 @@ class CryptoTests(unittest.TestCase):
             member_id=member_id,
             member_pub=member.member_pub,
         )
-        self.assertEqual(len(blob), 100)
+        self.assertEqual(len(blob), 144)
         out = unseal_grs(
             seal_blob=blob,
             group_id=group_id,
@@ -245,7 +243,7 @@ class HierarchyTests(unittest.TestCase):
         grs = os.urandom(32)
         group_id = os.urandom(16)
         member_id = os.urandom(16)
-        mk_a, _ = message_keys_for(
+        mk_a = message_key_for(
             grs=grs,
             group_id=group_id,
             member_id=member_id,
@@ -253,7 +251,7 @@ class HierarchyTests(unittest.TestCase):
             epoch=0,
             counter=0,
         )
-        mk_b, _ = message_keys_for(
+        mk_b = message_key_for(
             grs=grs,
             group_id=group_id,
             member_id=member_id,
@@ -268,7 +266,7 @@ class HierarchyTests(unittest.TestCase):
         grs = os.urandom(32)
         group_id = os.urandom(16)
         sender_id = os.urandom(16)
-        mk, nonce = message_keys_for(
+        mk = message_key_for(
             grs=grs,
             group_id=group_id,
             member_id=sender_id,
@@ -276,8 +274,8 @@ class HierarchyTests(unittest.TestCase):
             epoch=3,
             counter=9,
         )
-        ct = encrypt_chacha(mk, nonce, b"past traffic")
-        joiner_mk, joiner_nonce = message_keys_for(
+        ct = encrypt_token(mk, b"past traffic")
+        joiner_mk = message_key_for(
             grs=grs,
             group_id=group_id,
             member_id=sender_id,
@@ -285,13 +283,13 @@ class HierarchyTests(unittest.TestCase):
             epoch=3,
             counter=9,
         )
-        self.assertEqual(decrypt_chacha(joiner_mk, joiner_nonce, ct), b"past traffic")
+        self.assertEqual(decrypt_token(joiner_mk, ct), b"past traffic")
 
     def test_message_encrypt_decrypt_via_hierarchy(self) -> None:
         grs = os.urandom(32)
         group_id = os.urandom(16)
         member_id = os.urandom(16)
-        mk, nonce = message_keys_for(
+        mk = message_key_for(
             grs=grs,
             group_id=group_id,
             member_id=member_id,
@@ -299,9 +297,8 @@ class HierarchyTests(unittest.TestCase):
             epoch=2,
             counter=7,
         )
-        aad = b"header"
-        ct = encrypt_chacha(mk, nonce, b"payload", aad)
-        self.assertEqual(decrypt_chacha(mk, nonce, ct, aad), b"payload")
+        ct = encrypt_token(mk, b"payload")
+        self.assertEqual(decrypt_token(mk, ct), b"payload")
 
 
 class ReplayTests(unittest.TestCase):
@@ -329,7 +326,7 @@ class ReplayTests(unittest.TestCase):
         w = ReplayWindow(window_size=constants.REPLAY_WINDOW_MIN)
         w.commit(10)
         self.assertTrue(w.check(10000))
-        # Attacker fails AEAD: never commit
+        # Attacker fails Token auth: never commit
         self.assertEqual(w.max_c, 10)
         self.assertTrue(w.check(11))
         w.commit(11)
@@ -450,7 +447,7 @@ class FlagAndLengthTests(unittest.TestCase):
         )
         header[3] = 0x02
         with self.assertRaises(ValueError):
-            validate_ordinary_message_length(bytes(header) + bytes(16))
+            validate_ordinary_message_length(bytes(header) + bytes(64))
 
     def test_min_ordinary_message_lengths(self) -> None:
         group_id = os.urandom(16)
@@ -463,20 +460,8 @@ class FlagAndLengthTests(unittest.TestCase):
             counter=0,
         )
         with self.assertRaises(ValueError):
-            validate_ordinary_message_length(h1 + bytes(15))
-        validate_ordinary_message_length(h1 + bytes(16))
-        h2 = pack_ordinary_header(
-            group_id=group_id,
-            member_id=member_id,
-            state_seq=1,
-            epoch=0,
-            counter=0,
-            fmt=constants.MSG_FORMAT_XCHACHA,
-            nonce24=os.urandom(24),
-        )
-        with self.assertRaises(ValueError):
-            validate_ordinary_message_length(h2 + bytes(15))
-        validate_ordinary_message_length(h2 + bytes(16))
+            validate_ordinary_message_length(h1 + bytes(63))
+        validate_ordinary_message_length(h1 + bytes(64))
         hs = pack_ordinary_header(
             group_id=group_id,
             member_id=member_id,
@@ -486,8 +471,8 @@ class FlagAndLengthTests(unittest.TestCase):
             has_signature=True,
         )
         with self.assertRaises(ValueError):
-            validate_ordinary_message_length(hs + bytes(16) + bytes(63))
-        validate_ordinary_message_length(hs + bytes(16) + bytes(64))
+            validate_ordinary_message_length(hs + bytes(64) + bytes(63))
+        validate_ordinary_message_length(hs + bytes(64) + bytes(64))
 
 
 class AuthTests(unittest.TestCase):

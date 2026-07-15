@@ -6,7 +6,7 @@ from . import constants
 class ReplayWindow:
     """Sliding bitmap window for (MemberID, state_seq, epoch) counters.
 
-    Call check() before AEAD/signature. Call commit() only after both succeed.
+    Call check() before Token auth/signature. Call commit() only after both succeed.
     Unauthenticated packets must not advance max_c or the bitmap.
     """
 
@@ -33,7 +33,7 @@ class ReplayWindow:
         return True
 
     def commit(self, counter: int) -> None:
-        """Record counter after successful AEAD and optional member signature."""
+        """Record counter after successful Token auth and optional member signature."""
         if not self.check(counter):
             raise ValueError("counter failed tentative replay check")
         self._seen.add(counter)
